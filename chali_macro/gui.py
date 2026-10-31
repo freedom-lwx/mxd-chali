@@ -8,6 +8,7 @@ from __future__ import annotations
 import ctypes
 import os
 import queue
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
@@ -68,6 +69,8 @@ class App:
         self._logs: queue.Queue[str] = queue.Queue()
         self._pending: str | None = None
         self._point_size: tuple[int, int] | None = None
+        self._measuring = False
+        self._measure_cancel = False
         self._build()
         self.refresh_windows(quiet=True)
         self._load_default_config()
@@ -108,6 +111,8 @@ class App:
         ttk.Button(bar, text="下移", width=6,
                    command=lambda: self.move_step(1)).pack(side="left", padx=3)
         ttk.Button(bar, text="删除", width=6, command=self.remove_step).pack(side="left")
+        self.measure_button = ttk.Button(bar, text="量滚轮…", width=9, command=self.measure_wheel)
+        self.measure_button.pack(side="left", padx=(6, 0))
 
         self.loops_var = tk.StringVar(value="1")
         self.interval_var = tk.StringVar(value="1.0")
@@ -364,6 +369,100 @@ class App:
             return
         self.log(f"已保存配置：{path.name}")
 
+    # ---------- 量滚轮 ----------
+
+    def measure_wheel(self) -> None:
+        """先按 3 次对话键，再一格一格向下滚，F9 那一刻就是该填的格数。"""
+        if self.runner is not None or self._measuring or self._pending is not None:
+            return
+        if self.window is None:
+            messagebox.showwarning("还没有选窗口", "先选游戏窗口并点“用这个窗口”。",
+                                   parent=self.root)
+            return
+        key_step = next((step for step in self.steps if step.kind == "key"), None)
+        wheel_step = next((step for step in self.steps if step.kind == "wheel"), None)
+        if key_step is None or wheel_step is None:
+            messagebox.showinfo(
+                "还缺动作",
+                "量滚轮要用：一个按键动作（对话键）+ 一个滚轮动作（提供鼠标位置）。"
+                "先在表里各加一个，滚轮格数随便填，量完再改。",
+                parent=self.root,
+            )
+            return
+        try:
+            backend = WindowsInput(self.window.hwnd)
+        except InputError as exc:
+            messagebox.showerror("无法向游戏窗口发送输入", str(exc), parent=self.root)
+            return
+        point = (wheel_step.x, wheel_step.y)
+        self._backend = backend
+        self._measure_cancel = False
+        self._measuring = True
+        self._set_running(True)
+        self.status.configure(text="5 秒后开始量滚轮，请切到游戏并站在查理中士旁边…")
+        self._pending = self.root.after(
+            5000, lambda: self._launch_measure(backend, key_step.key, point)
+        )
+
+    def _launch_measure(self, backend: WindowsInput, key: str, point: tuple[int, int]) -> None:
+        self._pending = None
+        threading.Thread(target=self._run_measure, args=(backend, key, point),
+                         name="chali-measure", daemon=True).start()
+
+    def _run_measure(self, backend: WindowsInput, key: str, point: tuple[int, int]) -> None:
+        total = 0
+        stopped_by_key = False
+        reason = ""
+        try:
+            backend.ensure_foreground(10.0)
+            self.log(f"按 3 次 {key}，打开查理中士的兑换窗口…")
+            for _ in range(3):
+                if self._measure_cancel or backend.stop_requested():
+                    raise InputError("已取消")
+                backend.press_key(key, 0.08)
+                time.sleep(0.3)
+            time.sleep(0.6)
+            self.log(f"开始向下逐格滚（鼠标在 {point[0]}, {point[1]}）；"
+                     "看到灰狼尾巴那一行就按 F9")
+            for notch in range(1, 31):
+                if self._measure_cancel:
+                    break
+                if backend.stop_requested():
+                    stopped_by_key = True
+                    break
+                backend.wheel(point[0], point[1], -1)
+                total = notch
+                self.log(f"向下滚 {notch} 格")
+                deadline = time.monotonic() + 1.2
+                while time.monotonic() < deadline:
+                    if self._measure_cancel:
+                        break
+                    if backend.stop_requested():
+                        stopped_by_key = True
+                        break
+                    time.sleep(0.02)
+                if stopped_by_key or self._measure_cancel:
+                    break
+        except InputError as exc:
+            reason = f"中断：{exc}"
+        except Exception as exc:  # 后端抛出的其它输入问题
+            reason = f"中断：{exc}"
+        if self._measure_cancel:
+            reason = "已取消"
+        elif stopped_by_key:
+            reason = f"按 F9 停在第 {total} 格"
+        elif not reason:
+            reason = "滚满 30 格还没按 F9"
+        self.root.after(0, lambda: self._finish_measure(total, reason))
+
+    def _finish_measure(self, total: int, reason: str) -> None:
+        self._measuring = False
+        self._set_running(False)
+        self.status.configure(text="空闲 · " + reason)
+        self.log(f"测量结果：{reason}")
+        if total and "F9" in reason:
+            self.log(f"→ 把滚轮动作的格数改成 -{total}，再量好点击位置就能跑了")
+
     # ---------- 运行 ----------
 
     def start(self) -> None:
@@ -416,6 +515,8 @@ class App:
         if self._pending is not None:
             self.root.after_cancel(self._pending)
             self._pending = None
+            self._measuring = False
+            self._measure_cancel = True
             self._set_running(False)
             self.log("已取消启动")
             self.status.configure(text="未运行")
@@ -423,12 +524,17 @@ class App:
         if self.runner is not None:
             self.runner.stop()
             self.log("已请求结束，等当前动作做完…")
+        if self._measuring:
+            self._measure_cancel = True
+            self.log("已请求结束量滚轮…")
 
     def _set_running(self, running: bool) -> None:
         self.start_button.configure(state="disabled" if running else "normal")
         self.stop_button.configure(state="normal" if running else "disabled")
+        self.measure_button.configure(state="disabled" if running else "normal")
 
     def close(self) -> None:
+        self._measure_cancel = True
         if self._pending is not None:
             self.root.after_cancel(self._pending)
             self._pending = None

@@ -1,27 +1,53 @@
 {
-  "name": "查理中士兑换（示例·未校准）",
+  "name": "查理中士兑换（流程已确认·格数和点击位置待量）",
   "loops": 0,
-  "interval_s": 1.5,
-  "note": "占位示例：按键名、坐标、滚轮方向和格数都还没按真实客户端核对，用之前先在界面里改成你自己的操作。",
+  "interval_s": 1.2,
+  "note": "流程：y×3 → 滚轮向下 N 格 → 点击兑换 → y×2。N 用界面的“量滚轮”按钮量；滚轮和点击的坐标用“取点”改成游戏里的实际位置。",
   "steps": [
     {
       "kind": "key",
-      "key": "space",
+      "key": "y",
+      "hold_s": 0.08,
+      "delay_s": 0.3
+    },
+    {
+      "kind": "key",
+      "key": "y",
+      "hold_s": 0.08,
+      "delay_s": 0.3
+    },
+    {
+      "kind": "key",
+      "key": "y",
       "hold_s": 0.08,
       "delay_s": 0.8
     },
     {
       "kind": "wheel",
-      "x": 480,
-      "y": 300,
-      "notches": -4,
+      "x": 683,
+      "y": 384,
+      "notches": -1,
       "delay_s": 0.5
     },
     {
+      "kind": "click",
+      "x": 683,
+      "y": 640,
+      "button": "left",
+      "count": 1,
+      "delay_s": 1.2
+    },
+    {
       "kind": "key",
-      "key": "enter",
+      "key": "y",
       "hold_s": 0.08,
-      "delay_s": 1.5
+      "delay_s": 0.4
+    },
+    {
+      "kind": "key",
+      "key": "y",
+      "hold_s": 0.08,
+      "delay_s": 0.8
     }
   ]
 }
