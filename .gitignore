@@ -1,0 +1,9 @@
+# 本机校准出来的配置，不提交（每台机器的窗口大小和取点位置不同）
+config.json
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.log

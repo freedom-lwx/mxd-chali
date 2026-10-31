@@ -1,0 +1,27 @@
+{
+  "name": "查理中士兑换（示例·未校准）",
+  "loops": 0,
+  "interval_s": 1.5,
+  "note": "占位示例：按键名、坐标、滚轮方向和格数都还没按真实客户端核对，用之前先在界面里改成你自己的操作。",
+  "steps": [
+    {
+      "kind": "key",
+      "key": "space",
+      "hold_s": 0.08,
+      "delay_s": 0.8
+    },
+    {
+      "kind": "wheel",
+      "x": 480,
+      "y": 300,
+      "notches": -4,
+      "delay_s": 0.5
+    },
+    {
+      "kind": "key",
+      "key": "enter",
+      "hold_s": 0.08,
+      "delay_s": 1.5
+    }
+  ]
+}
