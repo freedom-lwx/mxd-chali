@@ -94,8 +94,9 @@ def main() -> int:
     text = tk.Text(root, height=10)
     text.pack(fill="both", expand=True)
     text.insert("end", "\n".join(f"第 {index} 行：滚轮和点击的靶子" for index in range(1, 201)))
-    hits = {"key": 0, "click": 0}
+    hits = {"key": 0, "arrow": 0, "click": 0}
     root.bind("<a>", lambda _event: hits.__setitem__("key", hits["key"] + 1))
+    root.bind("<Up>", lambda _event: hits.__setitem__("arrow", hits["arrow"] + 1))
     text.bind("<Button-1>", lambda _event: hits.__setitem__("click", hits["click"] + 1))
     root.update()
 
@@ -146,6 +147,10 @@ def main() -> int:
     backend.press_key("a", 0.06)
     root.update()
     results.append(("键盘", hits["key"] >= 1, f"收到 {hits['key']} 次"))
+
+    backend.press_key("up", 0.06)
+    root.update()
+    results.append(("方向键", hits["arrow"] >= 1, f"收到 {hits['arrow']} 次"))
 
     backend.click(center[0], center[1], "left", 1)
     root.update()

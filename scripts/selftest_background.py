@@ -115,6 +115,7 @@ def main() -> int:
     failures = 0
 
     input_backend.press_key("y", 0.05)
+    input_backend.press_key("up", 0.05)
     input_backend.wheel(100, 50, -3)
     input_backend.click(120, 60, "left", 1)
     pump(0.6)
@@ -125,6 +126,12 @@ def main() -> int:
     downs = [item for item in find(0x0100) if (item[2] >> 16) & 0xFF == scan]
     ups = [item for item in find(0x0101) if (item[2] >> 16) & 0xFF == scan]
     checks.append(("按键 y", bool(downs and ups), f"down {len(downs)} / up {len(ups)}"))
+
+    scan_up = int(_user32.MapVirtualKeyW(0x26, 0))
+    arrow_downs = [item for item in find(0x0100) if (item[2] >> 16) & 0xFF == scan_up]
+    arrow_extended = bool(arrow_downs and (arrow_downs[0][2] >> 24) & 1)
+    checks.append(("方向键 up（含扩展位）", bool(arrow_downs) and arrow_extended,
+                   f"down {len(arrow_downs)} 次，扩展位 {arrow_extended}"))
 
     moves = [item for item in find(0x0200) if item[2] == pack_point(100, 50)]
     checks.append(("鼠标移动", bool(moves), f"{len(moves)} 次落在 (100,50)"))

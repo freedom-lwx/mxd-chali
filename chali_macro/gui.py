@@ -41,7 +41,8 @@ APP_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = APP_DIR / "config.json"
 EXAMPLE_PATH = APP_DIR / "config.example.json"
 
-_COMMON_KEYS = ("enter", "space", "esc", "tab", "a", "s", "d", "f", "z", "x", "c", "q", "e", "1")
+_COMMON_KEYS = ("up", "down", "left", "right", "enter", "space", "esc", "tab",
+                "a", "s", "d", "f", "z", "x", "c", "q", "e", "1")
 
 
 def enable_dpi_awareness() -> None:
@@ -662,8 +663,8 @@ class StepDialog:
             self._row(row, "按键", ttk.Combobox(self.form, width=12, values=_COMMON_KEYS,
                                                 textvariable=self._var("key", step.key)))
             row += 1
-            self._spin(row, "按住(秒)", "hold_s", f"{step.hold_s:g}", frm=0.02, to=2.0,
-                       increment=0.02)
+            self._spin(row, "按住(秒)", "hold_s", f"{step.hold_s:g}", frm=0.02, to=5.0,
+                       increment=0.05)
             row += 1
         elif kind == "wait":
             self._spin(row, "等待(秒)", "seconds", f"{step.seconds:g}", frm=0.1, to=300,

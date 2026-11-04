@@ -103,6 +103,10 @@ _SM_CYVIRTUALSCREEN = 79
 _STOP_VK = 0x78  # F9
 
 _NAMED_KEYS: dict[str, tuple[int, bool]] = {
+    "left": (0x25, True),
+    "right": (0x27, True),
+    "up": (0x26, True),
+    "down": (0x28, True),
     "space": (0x20, False),
     "enter": (0x0D, False),
     "return": (0x0D, False),
@@ -115,6 +119,9 @@ _NAMED_KEYS: dict[str, tuple[int, bool]] = {
     "pagedown": (0x22, True),
     "insert": (0x2D, True),
     "delete": (0x2E, True),
+    "shift": (0x10, False),
+    "ctrl": (0x11, False),
+    "alt": (0x12, False),
 }
 for _index in range(1, 25):
     _NAMED_KEYS[f"f{_index}"] = (0x6F + _index, False)
@@ -137,6 +144,14 @@ def normalize_key(key: str) -> str:
         return "enter"
     if token in ("空格",):
         return "space"
+    if token in ("上", "上方向", "上键"):
+        return "up"
+    if token in ("下", "下方向", "下键"):
+        return "down"
+    if token in ("左", "左方向", "左键"):
+        return "left"
+    if token in ("右", "右方向", "右键"):
+        return "right"
     if token in _NAMED_KEYS:
         return token
     raise InputError(f"不支持的按键名：{key}")
@@ -530,13 +545,12 @@ class MessageInput:
     def press_key(self, key: str, hold_s: float = 0.08) -> None:
         vk, extended = _virtual_key(key)
         scan = int(_user32.MapVirtualKeyW(vk, 0)) or vk
-        down = _WM_SYSKEYDOWN if extended else _WM_KEYDOWN
-        up = _WM_SYSKEYUP if extended else _WM_KEYUP
-        self._post(down, vk, pack_key_lparam(scan, extended, False))
+        # 方向键等扩展键用 WM_KEYDOWN + lParam 里的扩展位表示，不是 WM_SYSKEYDOWN。
+        self._post(_WM_KEYDOWN, vk, pack_key_lparam(scan, extended, False))
         try:
             time.sleep(max(0.02, hold_s))
         finally:
-            self._post(up, vk, pack_key_lparam(scan, extended, True))
+            self._post(_WM_KEYUP, vk, pack_key_lparam(scan, extended, True))
 
     # ---- 鼠标 ----
 

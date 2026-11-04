@@ -22,12 +22,13 @@ KIND_LABELS = {
 }
 
 _NAMED_KEYS = (
+    "left", "right", "up", "down",
     "space", "enter", "esc", "tab", "home", "end", "pageup", "pagedown",
-    "insert", "delete",
+    "insert", "delete", "shift", "ctrl", "alt",
 ) + tuple(f"f{i}" for i in range(1, 25)) + tuple(f"numpad{i}" for i in range(10))
 
 MAX_COORD = 10000
-MAX_HOLD_S = 2.0
+MAX_HOLD_S = 5.0
 MAX_SECONDS = 300.0
 MAX_DELAY_S = 30.0
 MAX_DRAG_S = 5.0
@@ -62,6 +63,14 @@ def normalize_key_name(key: str) -> str:
         token = "enter"
     elif token == "空格":
         token = "space"
+    elif token in ("上", "上方向", "上键"):
+        token = "up"
+    elif token in ("下", "下方向", "下键"):
+        token = "down"
+    elif token in ("左", "左方向"):
+        token = "left"
+    elif token in ("右", "右方向"):
+        token = "right"
     elif token in ("esc", "escape"):
         token = "esc"
     if len(token) == 1 and token.isascii() and token.isalnum():
