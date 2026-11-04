@@ -12,7 +12,7 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from .runner import StepRunner
 from .steps import (
@@ -26,6 +26,7 @@ from .steps import (
 )
 from .winapi import (
     InputError,
+    MessageInput,
     Window,
     WindowsInput,
     cursor_client,
@@ -69,8 +70,11 @@ class App:
         self._logs: queue.Queue[str] = queue.Queue()
         self._pending: str | None = None
         self._point_size: tuple[int, int] | None = None
+        self._game_elevated: bool | None = None
+        self._my_elevated = self_elevated()
         self._measuring = False
         self._measure_cancel = False
+        self._autosave_after: str | None = None
         self._build()
         self.refresh_windows(quiet=True)
         self._load_default_config()
@@ -90,6 +94,11 @@ class App:
         ttk.Button(top, text="刷新", width=6, command=self.refresh_windows).grid(row=0, column=1, padx=3)
         ttk.Button(top, text="用这个窗口", width=11,
                    command=self.use_window).grid(row=0, column=2)
+        self.background_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text="后台发送（不要求游戏窗口在前台）",
+                        variable=self.background_var,
+                        command=self._on_mode_change).grid(row=2, column=0, columnspan=3,
+                                                           sticky="w", pady=(4, 0))
         self.window_state = ttk.Label(top, text="尚未选择窗口")
         self.window_state.grid(row=1, column=0, columnspan=3, sticky="w", pady=(5, 0))
         top.columnconfigure(0, weight=1)
@@ -116,6 +125,8 @@ class App:
 
         self.loops_var = tk.StringVar(value="1")
         self.interval_var = tk.StringVar(value="1.0")
+        self.loops_var.trace_add("write", self._schedule_autosave)
+        self.interval_var.trace_add("write", self._schedule_autosave)
         ttk.Label(bar, text="循环次数").pack(side="left", padx=(18, 3))
         ttk.Spinbox(bar, from_=0, to=9999, width=6,
                     textvariable=self.loops_var).pack(side="left")
@@ -148,8 +159,8 @@ class App:
         self.stop_button.pack(side="left", padx=6)
         self.status = ttk.Label(run, text="未运行")
         self.status.pack(side="left", padx=12)
-        ttk.Button(run, text="读取配置", command=self.load_config).pack(side="right")
-        ttk.Button(run, text="保存配置", command=self.save_config).pack(side="right", padx=6)
+        ttk.Label(run, text="配置自动保存在 config.json",
+                  foreground="#555").pack(side="right")
 
         log_box = ttk.LabelFrame(self.root, text="运行日志", padding=6)
         log_box.pack(fill="both", expand=True, **pad)
@@ -208,16 +219,16 @@ class App:
         self.window = self.windows[index]
         width, height = self.window.client_size()
         self.log(f"使用窗口：{self.window.title}（客户区 {width}×{height}）")
-        my_admin = self_elevated()
-        game_admin = process_elevated(window_pid(self.window.hwnd))
-        if game_admin and not my_admin:
+        my_admin = self._my_elevated
+        self._game_elevated = process_elevated(window_pid(self.window.hwnd))
+        if self._game_elevated and not my_admin:
             self.log(
                 "注意：游戏是管理员权限，本工具不是；Windows 会拦掉按键。"
                 "关掉本窗口，双击 run.bat（会自动提权）重新打开。"
             )
         else:
             self.log(f"权限：本工具{'管理员' if my_admin else '普通'}，"
-                     f"游戏{'管理员' if game_admin else '普通'}")
+                     f"游戏{'管理员' if self._game_elevated else '普通'}")
         if self._point_size and tuple(self._point_size) != (width, height):
             self.log(
                 f"注意：现有坐标是在客户区 {self._point_size[0]}×{self._point_size[1]} 时取的，"
@@ -235,10 +246,11 @@ class App:
         except InputError as exc:
             self.window_state.configure(text=f"窗口已不可用：{exc}")
             return
-        game_admin = process_elevated(window_pid(self.window.hwnd))
-        admin = " · 需以管理员运行" if (game_admin and not self_elevated()) else ""
+        game_admin = self._game_elevated
+        admin = " · 需以管理员运行" if (game_admin and not self._my_elevated) else ""
+        mode = " · 后台模式" if self.background_var.get() else ""
         self.window_state.configure(
-            text=f"{self.window.title} · 客户区 {width}×{height} · {front}{admin}"
+            text=f"{self.window.title} · 客户区 {width}×{height} · {front}{admin}{mode}"
         )
 
     # ---------- 动作表 ----------
@@ -281,6 +293,7 @@ class App:
             self._refresh_tree()
             self.tree.selection_set(str(len(self.steps) - 1))
             self.log(f"添加动作：{dialog.result.label()}")
+            self._autosave()
 
     def edit_step(self) -> None:
         index = self._selected_index()
@@ -293,6 +306,7 @@ class App:
             self._refresh_tree()
             self.tree.selection_set(str(index))
             self.log(f"修改动作：{dialog.result.label()}")
+            self._autosave()
 
     def move_step(self, delta: int) -> None:
         index = self._selected_index()
@@ -304,6 +318,7 @@ class App:
         self.steps[index], self.steps[target] = self.steps[target], self.steps[index]
         self._refresh_tree()
         self.tree.selection_set(str(target))
+        self._autosave()
 
     def remove_step(self) -> None:
         index = self._selected_index()
@@ -312,17 +327,19 @@ class App:
         removed = self.steps.pop(index)
         self._refresh_tree()
         self.log(f"删除动作：{removed.label()}")
+        self._autosave()
 
     # ---------- 配置 ----------
 
     def _load_default_config(self) -> None:
         if CONFIG_PATH.exists():
-            self._apply_config(CONFIG_PATH, quiet=False)
+            self._apply_config(CONFIG_PATH)
         elif EXAMPLE_PATH.exists():
-            self._apply_config(EXAMPLE_PATH, quiet=False)
-            self.log("以上是示例动作：按键和坐标都还没校准，先按你自己的操作改准再开始。")
+            self._apply_config(EXAMPLE_PATH)
+            self.log("已把示例流程存成 config.json：坐标和滚轮格数还需要你量一次。")
+            self._autosave()
 
-    def _apply_config(self, path: Path, quiet: bool = False) -> None:
+    def _apply_config(self, path: Path) -> None:
         try:
             macro = load_macro(path)
         except StepError as exc:
@@ -333,16 +350,7 @@ class App:
         self.interval_var.set(f"{macro.interval_s:g}")
         self._point_size = tuple(macro.client_size) if macro.client_size else None
         self._refresh_tree()
-        if not quiet:
-            self.log(f"已载入配置：{path.name}（{len(macro.steps)} 个动作）")
-
-    def load_config(self) -> None:
-        path = filedialog.askopenfilename(
-            parent=self.root, title="选择配置文件", initialdir=str(APP_DIR),
-            filetypes=[("JSON 配置", "*.json"), ("所有文件", "*.*")],
-        )
-        if path:
-            self._apply_config(Path(path))
+        self.log(f"已载入 {path.name}（{len(macro.steps)} 个动作）")
 
     def _macro(self) -> Macro:
         try:
@@ -360,14 +368,37 @@ class App:
             client_size=self._point_size,
         ).validated()
 
-    def save_config(self) -> None:
-        try:
-            macro = self._macro()
-            path = save_macro(macro, CONFIG_PATH)
-        except (StepError, OSError) as exc:
-            messagebox.showerror("保存失败", str(exc), parent=self.root)
+    def _autosave(self) -> None:
+        """只维护正在用的这一套：每次改动直接覆盖 config.json，不留历史。"""
+        if self._autosave_after is not None:
+            self.root.after_cancel(self._autosave_after)
+            self._autosave_after = None
+        if not self.steps:
             return
-        self.log(f"已保存配置：{path.name}")
+        try:
+            save_macro(self._macro(), CONFIG_PATH)
+        except StepError as exc:
+            self.log(f"配置没保存：{exc}")
+        except OSError as exc:
+            self.log(f"配置写入失败：{exc}")
+
+    def _schedule_autosave(self, *_args) -> None:
+        if self._autosave_after is not None:
+            self.root.after_cancel(self._autosave_after)
+        self._autosave_after = self.root.after(600, self._autosave)
+
+    # ---------- 发送方式 ----------
+
+    def _on_mode_change(self) -> None:
+        self.log("发送方式改成了" + ("后台消息（游戏可以不在前台）" if self.background_var.get()
+                                 else "前台按键（游戏必须在最前面）"))
+
+    def _make_backend(self):
+        if self.window is None:
+            raise InputError("先在上方选游戏窗口并点“用这个窗口”")
+        if self.background_var.get():
+            return MessageInput(self.window.hwnd)
+        return WindowsInput(self.window.hwnd)
 
     # ---------- 量滚轮 ----------
 
@@ -390,7 +421,7 @@ class App:
             )
             return
         try:
-            backend = WindowsInput(self.window.hwnd)
+            backend = self._make_backend()
         except InputError as exc:
             messagebox.showerror("无法向游戏窗口发送输入", str(exc), parent=self.root)
             return
@@ -399,7 +430,9 @@ class App:
         self._measure_cancel = False
         self._measuring = True
         self._set_running(True)
-        self.status.configure(text="5 秒后开始量滚轮，请切到游戏并站在查理中士旁边…")
+        where = ("量滚轮（后台模式，不用切窗口）" if self.background_var.get()
+                 else "量滚轮，请切到游戏并站在查理中士旁边")
+        self.status.configure(text=f"5 秒后开始{where}…")
         self._pending = self.root.after(
             5000, lambda: self._launch_measure(backend, key_step.key, point)
         )
@@ -414,7 +447,7 @@ class App:
         stopped_by_key = False
         reason = ""
         try:
-            backend.ensure_foreground(10.0)
+            backend.ensure_ready(10.0)
             self.log(f"按 3 次 {key}，打开查理中士的兑换窗口…")
             for _ in range(3):
                 if self._measure_cancel or backend.stop_requested():
@@ -461,7 +494,19 @@ class App:
         self.status.configure(text="空闲 · " + reason)
         self.log(f"测量结果：{reason}")
         if total and "F9" in reason:
-            self.log(f"→ 把滚轮动作的格数改成 -{total}，再量好点击位置就能跑了")
+            self._apply_measured_notches(-total)
+
+    def _apply_measured_notches(self, notches: int) -> None:
+        """把量出来的格数直接写进第一个滚轮动作，并覆盖保存。"""
+        for index, step in enumerate(self.steps):
+            if step.kind != "wheel":
+                continue
+            self.steps[index] = Step(**{**step.to_dict(), "notches": notches}).validated()
+            self._refresh_tree()
+            self.log(f"→ 已把滚轮动作改成 {self.steps[index].label()}")
+            self._autosave()
+            return
+        self.log(f"→ 没有滚轮动作可写；把格数填成 {notches}")
 
     # ---------- 运行 ----------
 
@@ -482,10 +527,11 @@ class App:
             messagebox.showerror("动作有问题", str(exc), parent=self.root)
             return
         try:
-            self._backend = WindowsInput(self.window.hwnd)
+            self._backend = self._make_backend()
         except InputError as exc:
             messagebox.showerror("无法向游戏窗口发送输入", str(exc), parent=self.root)
             return
+        self.log("发送方式：" + ("后台消息" if self.background_var.get() else "前台按键"))
         size = self._backend.client_size()
         if macro.client_size and tuple(macro.client_size) != tuple(size):
             self.log(
@@ -499,7 +545,8 @@ class App:
         if remaining <= 0:
             self._launch(macro)
             return
-        self.status.configure(text=f"{remaining} 秒后开始，请切到游戏窗口…")
+        hint = "，不用切窗口" if self.background_var.get() else "，请切到游戏窗口"
+        self.status.configure(text=f"{remaining} 秒后开始{hint}…")
         self._pending = self.root.after(1000, lambda: self._countdown(remaining - 1, macro))
 
     def _launch(self, macro: Macro) -> None:
@@ -535,6 +582,10 @@ class App:
 
     def close(self) -> None:
         self._measure_cancel = True
+        if self._autosave_after is not None:
+            self.root.after_cancel(self._autosave_after)
+            self._autosave_after = None
+        self._autosave()
         if self._pending is not None:
             self.root.after_cancel(self._pending)
             self._pending = None

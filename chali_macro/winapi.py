@@ -305,7 +305,10 @@ class WindowsInput:
         """F9 是否被按过（自上次查询以来）。"""
         return bool(_user32.GetAsyncKeyState(self._stop_vk) & 0x0001)
 
-    def ensure_foreground(self, timeout_s: float = 8.0) -> None:
+    requires_foreground = True
+
+    def ensure_ready(self, timeout_s: float = 8.0) -> None:
+        """前台模式下必须等到游戏窗口在前台。"""
         deadline = time.monotonic() + max(0.0, timeout_s)
         while True:
             if self.is_foreground():
@@ -424,3 +427,167 @@ class WindowsInput:
                 time.sleep(pause)
         finally:
             self._send_mouse(up)
+
+
+# ---------- 后台模式：用 PostMessage 把键鼠消息发进窗口，不需要它在前台 ----------
+
+_WM_KEYDOWN = 0x0100
+_WM_KEYUP = 0x0101
+_WM_SYSKEYDOWN = 0x0104
+_WM_SYSKEYUP = 0x0105
+_WM_MOUSEMOVE = 0x0200
+_WM_LBUTTONDOWN = 0x0201
+_WM_LBUTTONUP = 0x0202
+_WM_RBUTTONDOWN = 0x0204
+_WM_RBUTTONUP = 0x0205
+_WM_MOUSEWHEEL = 0x020A
+_MK_LBUTTON = 0x0001
+_MK_RBUTTON = 0x0002
+
+_user32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+_user32.PostMessageW.restype = wt.BOOL
+_user32.IsWindow.argtypes = [wt.HWND]
+_user32.IsWindow.restype = wt.BOOL
+
+
+def pack_point(x: int, y: int) -> int:
+    """窗口消息里的坐标：低 16 位 X、高 16 位 Y（有符号）。"""
+    return ((int(y) & 0xFFFF) << 16) | (int(x) & 0xFFFF)
+
+
+def pack_key_lparam(scan: int, extended: bool, up: bool) -> int:
+    """WM_KEYDOWN / WM_KEYUP 的 lParam：扫描码 + 扩展位 + 抬起标志。"""
+    value = 1 | ((int(scan) & 0xFF) << 16)
+    if extended:
+        value |= 1 << 24
+    if up:
+        value |= (1 << 30) | (1 << 31)
+    return value
+
+
+def pack_wheel_wparam(notches: int) -> int:
+    """WM_MOUSEWHEEL 的 wParam：高 16 位是滚动量（每格 120）。"""
+    return ((int(notches) * _WHEEL_DELTA) & 0xFFFF) << 16
+
+
+class MessageInput:
+    """后台模式：不要求游戏窗口在前台，直接往窗口发键鼠消息。
+
+    能不能生效取决于客户端认不认窗口消息：很多私服客户端能认，也有的只读底层输入、
+    这时游戏会毫无反应——那就改回前台模式。窗口最小化时通常不生效。
+    """
+
+    name = "postMessage"
+    sends_input = True
+    requires_foreground = False
+
+    def __init__(self, hwnd: int, *, stop_vk: int = _STOP_VK) -> None:
+        self.hwnd = int(hwnd)
+        self._stop_vk = int(stop_vk)
+        self.my_elevated = self_elevated()
+        self.target_elevated = process_elevated(window_pid(self.hwnd))
+        if self.target_elevated and not self.my_elevated:
+            raise InputError(
+                "游戏以管理员权限运行，Windows 会拦掉本工具的输入；"
+                "请关掉本工具，双击 run.bat（会自动申请管理员权限）再试"
+            )
+        if not _user32.IsWindow(self.hwnd):
+            raise InputError("游戏窗口句柄无效；请点“刷新”重新选窗口")
+        # 清掉启动前按下的 F9。
+        _user32.GetAsyncKeyState(self._stop_vk)
+        width, height = client_size(self.hwnd)
+        if width <= 0 or height <= 0:
+            raise InputError("游戏窗口客户区为空；请把游戏窗口恢复出来")
+
+    # ---- 状态 ----
+
+    def client_size(self) -> tuple[int, int]:
+        return client_size(self.hwnd)
+
+    def is_foreground(self) -> bool:
+        return is_foreground(self.hwnd)
+
+    def stop_requested(self) -> bool:
+        return bool(_user32.GetAsyncKeyState(self._stop_vk) & 0x0001)
+
+    def ensure_ready(self, timeout_s: float = 8.0) -> None:
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        while True:
+            if _user32.IsWindow(self.hwnd):
+                return
+            if self.stop_requested():
+                raise InputError("等游戏窗口时收到 F9 停止")
+            if time.monotonic() >= deadline:
+                raise InputError("游戏窗口不见了；请重新刷新窗口列表")
+            time.sleep(0.05)
+
+    def _post(self, message: int, wparam: int = 0, lparam: int = 0) -> None:
+        if not _user32.PostMessageW(self.hwnd, message, wparam, lparam):
+            raise InputError("发不进游戏窗口（窗口可能已关闭，或权限不足）")
+
+    # ---- 键盘 ----
+
+    def press_key(self, key: str, hold_s: float = 0.08) -> None:
+        vk, extended = _virtual_key(key)
+        scan = int(_user32.MapVirtualKeyW(vk, 0)) or vk
+        down = _WM_SYSKEYDOWN if extended else _WM_KEYDOWN
+        up = _WM_SYSKEYUP if extended else _WM_KEYUP
+        self._post(down, vk, pack_key_lparam(scan, extended, False))
+        try:
+            time.sleep(max(0.02, hold_s))
+        finally:
+            self._post(up, vk, pack_key_lparam(scan, extended, True))
+
+    # ---- 鼠标 ----
+
+    def move(self, x: int, y: int, *, settle_s: float = 0.02) -> None:
+        self._post(_WM_MOUSEMOVE, 0, pack_point(x, y))
+        if settle_s > 0:
+            time.sleep(settle_s)
+
+    def wheel(self, x: int, y: int, notches: int) -> None:
+        if not notches:
+            raise InputError("滚轮格数不能为 0")
+        self.move(x, y)
+        screen_x, screen_y = _client_to_screen(self.hwnd, int(x), int(y))
+        self._post(_WM_MOUSEWHEEL, pack_wheel_wparam(notches),
+                   pack_point(screen_x, screen_y))
+
+    def click(self, x: int, y: int, button: str = "left", count: int = 1) -> None:
+        if button == "left":
+            down, up = _WM_LBUTTONDOWN, _WM_LBUTTONUP
+        elif button == "right":
+            down, up = _WM_RBUTTONDOWN, _WM_RBUTTONUP
+        else:
+            raise InputError(f"不支持的鼠标键：{button}")
+        self.move(x, y)
+        for _ in range(max(1, int(count))):
+            self._post(down, _MK_LBUTTON if button == "left" else _MK_RBUTTON,
+                       pack_point(x, y))
+            time.sleep(0.03)
+            self._post(up, 0, pack_point(x, y))
+            time.sleep(0.06)
+
+    def drag(self, x1: int, y1: int, x2: int, y2: int, *,
+             button: str = "left", duration_s: float = 0.4, steps: int = 12) -> None:
+        if button == "left":
+            down, up = _WM_LBUTTONDOWN, _WM_LBUTTONUP
+        elif button == "right":
+            down, up = _WM_RBUTTONDOWN, _WM_RBUTTONUP
+        else:
+            raise InputError(f"不支持的鼠标键：{button}")
+        self.move(x1, y1)
+        self._post(down, _MK_LBUTTON if button == "left" else _MK_RBUTTON,
+                   pack_point(x1, y1))
+        try:
+            steps = max(2, int(steps))
+            pause = max(0.0, duration_s) / steps
+            for index in range(1, steps + 1):
+                ratio = index / steps
+                self._post(_WM_MOUSEMOVE, 0, pack_point(
+                    int(round(x1 + (x2 - x1) * ratio)),
+                    int(round(y1 + (y2 - y1) * ratio)),
+                ))
+                time.sleep(pause)
+        finally:
+            self._post(up, 0, pack_point(round(x2), round(y2)))

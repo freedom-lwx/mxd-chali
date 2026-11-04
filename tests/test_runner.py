@@ -13,7 +13,7 @@ class FakeBackend:
         self.stop_flag = False
         self.foreground_error: str | None = None
 
-    def ensure_foreground(self, timeout_s: float) -> None:
+    def ensure_ready(self, timeout_s: float) -> None:
         if self.foreground_error:
             raise RuntimeError(self.foreground_error)
 

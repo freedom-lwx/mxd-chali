@@ -27,11 +27,11 @@ class StepRunner:
     """
 
     def __init__(self, macro: Macro, backend, *, log=None,
-                 foreground_timeout_s: float = 8.0, poll_s: float = 0.02) -> None:
+                 ready_timeout_s: float = 8.0, poll_s: float = 0.02) -> None:
         self.macro = macro.validated()
         self._backend = backend
         self._log = log or (lambda text: None)
-        self._foreground_timeout_s = foreground_timeout_s
+        self._ready_timeout_s = ready_timeout_s
         self._poll_s = max(0.005, float(poll_s))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -103,8 +103,11 @@ class StepRunner:
         loop_count = self.macro.loops
         total = len(self.macro.steps)
         try:
-            self._log("等待游戏窗口切到前台…")
-            self._backend.ensure_foreground(self._foreground_timeout_s)
+            if getattr(self._backend, "requires_foreground", True):
+                self._log("等待游戏窗口切到前台…")
+            else:
+                self._log("后台模式：不用切前台，直接往游戏窗口发消息")
+            self._backend.ensure_ready(self._ready_timeout_s)
             self._log(
                 f"开始：{total} 个动作，"
                 + ("一直循环" if loop_count == 0 else f"循环 {loop_count} 轮")
