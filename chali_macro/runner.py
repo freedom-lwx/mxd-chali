@@ -81,6 +81,13 @@ class StepRunner:
             time.sleep(min(self._poll_s, remaining))
 
     def _apply(self, step: Step) -> None:
+        """按“次数”重复执行；每两次之间等 gap_s，全部做完才进下一步。"""
+        for index in range(step.repeat):
+            self._apply_once(step)
+            if index + 1 < step.repeat and not self._sleep(step.gap_s):
+                raise RunnerError("停止")
+
+    def _apply_once(self, step: Step) -> None:
         backend = self._backend
         kind = step.kind
         if kind == "key":
@@ -93,7 +100,7 @@ class StepRunner:
         elif kind == "wheel":
             backend.wheel(step.x, step.y, step.notches)
         elif kind == "click":
-            backend.click(step.x, step.y, step.button, step.count)
+            backend.click(step.x, step.y, step.button, 1)
         elif kind == "drag":
             backend.drag(step.x, step.y, step.x2, step.y2, step.button, step.duration_s)
         else:  # pragma: no cover - 校验已挡住

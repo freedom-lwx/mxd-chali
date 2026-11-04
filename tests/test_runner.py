@@ -74,6 +74,26 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("完成 2 轮", result.reason)
         self.assertTrue(any("第 1 轮完成" in line for line in logs))
 
+    def test_repeat_runs_step_several_times(self) -> None:
+        backend = FakeBackend()
+        macro = Macro(
+            steps=(
+                Step(kind="key", key="y", repeat=3, gap_s=0, delay_s=0),
+                Step(kind="wheel", x=480, y=300, notches=-2, delay_s=0),
+                Step(kind="key", key="enter", repeat=2, gap_s=0, delay_s=0),
+            ),
+            loops=1,
+            interval_s=0,
+        ).validated()
+        runner = StepRunner(macro, backend)
+        runner.start()
+        run_to_end(runner)
+        runner.join(1.0)
+        self.assertEqual(
+            backend.calls,
+            [("key", "y")] * 3 + [("wheel", 480, 300, -2)] + [("key", "enter")] * 2,
+        )
+
     def test_f9_request_stops_cleanly(self) -> None:
         backend = FakeBackend()
         macro = Macro(steps=(Step(kind="key", key="space", delay_s=0.02),), loops=0,

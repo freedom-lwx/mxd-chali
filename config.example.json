@@ -1,25 +1,15 @@
 {
-  "name": "查理中士兑换（流程已确认·格数和点击位置待量）",
+  "name": "查理中士兑换",
   "loops": 0,
   "interval_s": 1.2,
-  "note": "流程：y×3 → 滚轮向下 N 格 → 点击兑换 → y×2。N 用界面的“量滚轮”按钮量；滚轮和点击的坐标用“取点”改成游戏里的实际位置。",
+  "note": "流程：y×3 → 滚轮向下 N 格 → 点击兑换 → y×2。滚轮格数用界面“量滚轮”量；滚轮和点击的坐标用“取点”改成游戏里的实际位置。",
   "steps": [
     {
       "kind": "key",
       "key": "y",
       "hold_s": 0.08,
-      "delay_s": 0.3
-    },
-    {
-      "kind": "key",
-      "key": "y",
-      "hold_s": 0.08,
-      "delay_s": 0.3
-    },
-    {
-      "kind": "key",
-      "key": "y",
-      "hold_s": 0.08,
+      "repeat": 3,
+      "gap_s": 0.3,
       "delay_s": 0.8
     },
     {
@@ -27,6 +17,8 @@
       "x": 683,
       "y": 384,
       "notches": -1,
+      "repeat": 1,
+      "gap_s": 0.2,
       "delay_s": 0.5
     },
     {
@@ -34,19 +26,16 @@
       "x": 683,
       "y": 640,
       "button": "left",
-      "count": 1,
+      "repeat": 1,
+      "gap_s": 0.2,
       "delay_s": 1.2
     },
     {
       "kind": "key",
       "key": "y",
       "hold_s": 0.08,
-      "delay_s": 0.4
-    },
-    {
-      "kind": "key",
-      "key": "y",
-      "hold_s": 0.08,
+      "repeat": 2,
+      "gap_s": 0.3,
       "delay_s": 0.8
     }
   ]

@@ -683,8 +683,6 @@ class StepDialog:
                                                   values=("left", "right"),
                                                   textvariable=self._var("button", step.button)))
             row += 1
-            self._spin(row, "点击次数", "count", step.count, frm=1, to=20, increment=1)
-            row += 1
         elif kind == "drag":
             row = self._coords(row, step)
             line = ttk.Frame(self.form)
@@ -704,6 +702,12 @@ class StepDialog:
             row += 1
             self._spin(row, "拖动时长(秒)", "duration_s", f"{step.duration_s:g}",
                        frm=0.05, to=5.0, increment=0.05)
+            row += 1
+        if kind != "wait":
+            self._spin(row, "次数（连做几遍）", "repeat", step.repeat, frm=1, to=50, increment=1)
+            row += 1
+            self._spin(row, "每两次之间(秒)", "gap_s", f"{step.gap_s:g}", frm=0, to=10,
+                       increment=0.05)
             row += 1
         self._spin(row, "之后等待(秒)", "delay_s", f"{step.delay_s:g}", frm=0, to=30,
                    increment=0.05)
@@ -756,6 +760,8 @@ class StepDialog:
         kind = step.kind
         try:
             data: dict = {"kind": kind, "delay_s": self._num("delay_s")}
+            if kind != "wait":
+                data.update(repeat=self._int("repeat"), gap_s=self._num("gap_s"))
             if kind == "key":
                 data.update(key=self.vars["key"].get(), hold_s=self._num("hold_s"))
             elif kind == "wait":
@@ -766,8 +772,6 @@ class StepDialog:
                     data.update(button=self.vars["button"].get())
                 if kind == "wheel":
                     data.update(notches=self._int("notches"))
-                if kind == "click":
-                    data.update(count=self._int("count"))
                 if kind == "drag":
                     data.update(x2=self._int("x2"), y2=self._int("y2"),
                                 duration_s=self._num("duration_s"))

@@ -44,12 +44,37 @@ class StepValidationTest(unittest.TestCase):
 
     def test_click_and_drag_limits(self) -> None:
         with self.assertRaises(StepError):
-            Step(kind="click", x=1, y=1, count=0).validated()
+            Step(kind="click", x=1, y=1, repeat=0).validated()
         with self.assertRaises(StepError):
             Step(kind="click", x=1, y=1, button="middle").validated()
         with self.assertRaises(StepError):
             Step(kind="drag", x=1, y=1, x2=2, y2=2, duration_s=9).validated()
         self.assertEqual(Step(kind="drag", x=1, y=1, x2=2, y2=2).validated().x2, 2)
+
+    def test_repeat_defaults_to_once(self) -> None:
+        self.assertEqual(Step(kind="key", key="y").validated().repeat, 1)
+
+    def test_repeat_is_kept_and_limited(self) -> None:
+        step = Step(kind="key", key="y", repeat=3, gap_s=0.3).validated()
+        self.assertEqual((step.repeat, step.gap_s), (3, 0.3))
+        with self.assertRaises(StepError):
+            Step(kind="key", key="y", repeat=51).validated()
+        with self.assertRaises(StepError):
+            Step(kind="wheel", x=1, y=1, notches=-1, gap_s=11).validated()
+
+    def test_wait_has_no_repeat(self) -> None:
+        with self.assertRaises(StepError):
+            Step(kind="wait", seconds=1.0, repeat=3).validated()
+
+    def test_old_count_field_is_read_as_repeat(self) -> None:
+        step = Step.from_dict({"kind": "click", "x": 5, "y": 6, "count": 4})
+        self.assertEqual(step.repeat, 4)
+        self.assertNotIn("count", step.to_dict())
+
+    def test_label_shows_repeat(self) -> None:
+        label = Step(kind="key", key="y", repeat=3, gap_s=0.3).validated().label()
+        self.assertIn("×3", label)
+        self.assertNotIn("×", Step(kind="wait", seconds=1.0).label())
 
     def test_delay_and_wait_bounds(self) -> None:
         with self.assertRaises(StepError):

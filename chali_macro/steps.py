@@ -29,6 +29,8 @@ _NAMED_KEYS = (
 
 MAX_COORD = 10000
 MAX_HOLD_S = 5.0
+MAX_REPEAT = 50
+MAX_GAP_S = 10.0
 MAX_SECONDS = 300.0
 MAX_DELAY_S = 30.0
 MAX_DRAG_S = 5.0
@@ -96,7 +98,8 @@ class Step:
     y2: int = 0
     notches: int = -1
     button: str = "left"
-    count: int = 1
+    repeat: int = 1
+    gap_s: float = 0.25
     duration_s: float = 0.4
     delay_s: float = 0.3
 
@@ -104,37 +107,40 @@ class Step:
         if not isinstance(self.kind, str) or self.kind not in KINDS:
             raise StepError(f"未知动作类型：{self.kind!r}；可选 {', '.join(KINDS)}")
         delay = _number(self.delay_s, "执行后间隔(秒)", low=0.0, high=MAX_DELAY_S)
+        repeat = _integer(self.repeat, "次数", low=1, high=MAX_REPEAT)
+        gap = _number(self.gap_s, "每两次之间(秒)", low=0.0, high=MAX_GAP_S)
         kind = self.kind
+        if kind == "wait":
+            if repeat != 1:
+                raise StepError("等待动作没有\"次数\"；想等更久就把秒数调大")
+            return replace(self, seconds=_number(self.seconds, "等待(秒)", low=0.01,
+                                                high=MAX_SECONDS),
+                           repeat=1, gap_s=gap, delay_s=delay)
         if kind == "key":
             return replace(
                 self,
                 key=normalize_key_name(self.key),
                 hold_s=_number(self.hold_s, "按住(秒)", low=0.02, high=MAX_HOLD_S),
+                repeat=repeat,
+                gap_s=gap,
                 delay_s=delay,
             )
-        if kind == "wait":
-            return replace(self, seconds=_number(self.seconds, "等待(秒)", low=0.01,
-                                                high=MAX_SECONDS), delay_s=delay)
         coords = dict(
             x=_integer(self.x, "X", low=0, high=MAX_COORD),
             y=_integer(self.y, "Y", low=0, high=MAX_COORD),
         )
         if kind == "move":
-            return replace(self, delay_s=delay, **coords)
+            return replace(self, repeat=repeat, gap_s=gap, delay_s=delay, **coords)
         if kind == "wheel":
             notches = _integer(self.notches, "滚轮格数", low=-50, high=50)
             if notches == 0:
                 raise StepError("滚轮格数不能为 0；向下滚填负数")
-            return replace(self, notches=notches, delay_s=delay, **coords)
+            return replace(self, notches=notches, repeat=repeat, gap_s=gap,
+                           delay_s=delay, **coords)
         if kind == "click":
             if self.button not in ("left", "right"):
                 raise StepError("鼠标键只能是 left 或 right")
-            return replace(
-                self,
-                count=_integer(self.count, "点击次数", low=1, high=20),
-                delay_s=delay,
-                **coords,
-            )
+            return replace(self, repeat=repeat, gap_s=gap, delay_s=delay, **coords)
         if kind == "drag":
             if self.button not in ("left", "right"):
                 raise StepError("鼠标键只能是 left 或 right")
@@ -143,29 +149,37 @@ class Step:
                 x2=_integer(self.x2, "终点 X", low=0, high=MAX_COORD),
                 y2=_integer(self.y2, "终点 Y", low=0, high=MAX_COORD),
                 duration_s=_number(self.duration_s, "拖动时长(秒)", low=0.05, high=MAX_DRAG_S),
+                repeat=repeat,
+                gap_s=gap,
                 delay_s=delay,
                 **coords,
             )
         raise StepError(f"未知动作类型：{kind}")  # pragma: no cover - KINDS 已覆盖
 
+    def _times(self) -> str:
+        if self.kind == "wait" or self.repeat <= 1:
+            return ""
+        return f" ×{self.repeat}（每两次隔 {self.gap_s:g}s）"
+
     def label(self) -> str:
         """给界面表格用的一句话说明。"""
         kind = self.kind
         if kind == "key":
-            return f"按 {self.key}（{self.hold_s:.2f}s）"
+            return f"按 {self.key}（{self.hold_s:.2f}s）{self._times()}"
         if kind == "wait":
             return f"等 {self.seconds:.2f}s"
         if kind == "move":
-            return f"移到 ({self.x}, {self.y})"
+            return f"移到 ({self.x}, {self.y}){self._times()}"
         if kind == "wheel":
             direction = "上" if self.notches > 0 else "下"
-            return f"滚轮 {direction} {abs(self.notches)} 格 @({self.x}, {self.y})"
+            return f"滚轮 {direction} {abs(self.notches)} 格 @({self.x}, {self.y}){self._times()}"
         if kind == "click":
             side = "左" if self.button == "left" else "右"
-            return f"{side}键 {self.count} 次 @({self.x}, {self.y})"
+            return f"{side}键点 @({self.x}, {self.y}){self._times()}"
         if kind == "drag":
             side = "左" if self.button == "left" else "右"
-            return f"{side}键拖 ({self.x}, {self.y})→({self.x2}, {self.y2}) {self.duration_s:.2f}s"
+            return (f"{side}键拖 ({self.x}, {self.y})→({self.x2}, {self.y2}) "
+                    f"{self.duration_s:.2f}s{self._times()}")
         return kind
 
     def to_dict(self) -> dict:
@@ -179,10 +193,12 @@ class Step:
             if self.kind == "wheel":
                 data.update(notches=self.notches)
             if self.kind == "click":
-                data.update(button=self.button, count=self.count)
+                data.update(button=self.button)
         elif self.kind == "drag":
             data.update(x=self.x, y=self.y, x2=self.x2, y2=self.y2,
                         button=self.button, duration_s=self.duration_s)
+        if self.kind != "wait":
+            data.update(repeat=self.repeat, gap_s=self.gap_s)
         data["delay_s"] = self.delay_s
         return data
 
@@ -195,12 +211,16 @@ class Step:
             raise StepError(f"未知动作类型：{kind!r}")
         allowed = {
             "kind", "key", "hold_s", "seconds", "x", "y", "x2", "y2",
-            "notches", "button", "count", "duration_s", "delay_s",
+            "notches", "button", "repeat", "gap_s", "duration_s", "delay_s", "count",
         }
         unknown = set(data) - allowed
         if unknown:
             raise StepError(f"步骤里有不认识的字段：{', '.join(sorted(unknown))}")
-        step = cls(**{key: data[key] for key in data if key != "kind"}, kind=kind)
+        values = {key: value for key, value in data.items() if key != "kind"}
+        # 旧配置里点击用 count 表示次数，读进来当成 repeat。
+        if "count" in values:
+            values.setdefault("repeat", values.pop("count"))
+        step = cls(kind=kind, **values)
         return step.validated()
 
 
